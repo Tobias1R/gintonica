@@ -1,0 +1,5 @@
+_dev
+_dev/*
+*.so
+.vscode
+.vscode/*

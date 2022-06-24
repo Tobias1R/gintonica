@@ -10,7 +10,7 @@ import (
 )
 
 func JWTAuthenticate(ctx *gin.Context) {
-	var loginService service.LoginService = service.StaticLoginService()
+	var loginService service.LoginService = service.MongoLoginService()
 	var jwtService service.JWTService = service.JWTAuthService()
 	var loginController controller.LoginController = controller.LoginHandler(loginService, jwtService)
 

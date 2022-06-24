@@ -2,7 +2,6 @@ package api_auth
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/Tobias1R/gintonica/pkg/localdb"
@@ -13,6 +12,7 @@ import (
 type User struct {
 	ID        primitive.ObjectID  `bson:"_id" json:"id,omitempty"`
 	Timestamp primitive.Timestamp `json:"timestamp"`
+	Name      string              `json:"name"`
 	Email     string              `json:"email"`
 	Password  string              `json:"password"`
 	Status    string              `json:"status"`
@@ -29,15 +29,13 @@ var UserInterface interface {
 
 func (u User) CreateUser() User {
 	u.Password, _ = sec.HashPassword(u.Password)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	fmt.Println("PAZUORDI", u.Password)
+
 	c, _ := localdb.Connect()
-	//client := localdb.MongoClient
+	defer c.Disconnect(context.TODO())
+
 	uCollection := c.Database("store").Collection("User")
 	uCollection.InsertOne(context.TODO(), u)
-	defer c.Disconnect(context.TODO())
+
 	return u
 }
 
@@ -47,16 +45,17 @@ func EditUser() {}
 
 func ChangeStatus() {}
 
-func CreateSuperUser(email string, password string) (User, error) {
-	//password, _ = sec.HashPassword(password)
+func CreateSuperUser(name string, email string, password string) (User, error) {
+	// Fill struct and create an SuperUser in database
 	u := User{
 		ID:        primitive.NewObjectID(),
 		Timestamp: primitive.Timestamp{T: uint32(time.Now().Unix())},
+		Name:      name,
 		Email:     email,
 		Password:  password,
 		Status:    "A",
 		LastLogin: primitive.Timestamp{T: uint32(time.Now().Unix())},
-		IsAdmin:   false,
+		IsAdmin:   true,
 		Groups:    []string{"admin"},
 	}
 	u.CreateUser()

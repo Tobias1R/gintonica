@@ -17,6 +17,7 @@ import (
 	"github.com/Tobias1R/gintonica/pkg/localdb"
 
 	"github.com/Tobias1R/gintonica/api"
+	//sec "github.com/Tobias1R/gintonica/api/auth"
 )
 
 var mongoClient mongo.Client
@@ -39,7 +40,7 @@ func serve() {
 }
 
 func main() {
-	//u, _ := sec.CreateSuperUser("email@gmail.com", "password")
+	//u, _ := sec.CreateSuperUser("Ozymandias", "email@gmail.com", "password")
 	//fmt.Println(u)
 	defer serve()
 }

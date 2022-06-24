@@ -16,9 +16,6 @@ func RegisterAll(router gin.Engine) {
 		authorized.GET("/products", v1.ProductsList)
 		authorized.GET("/products/:category", v1.ProductCategoryList)
 	}
-	router.GET("/albumsB", v1.Albums)
-	router.GET("/listDir", v1.ListDir)
-	//router.GET("/products", v1.ProductsList)
-	//router.GET("/products/:category", v1.ProductCategoryList)
+
 	router.POST("/login", sec.JWTAuthenticate)
 }
