@@ -1,9 +1,0 @@
-{
-    "_id": 1,
-    "CreatedAt": "2022-06-24T10:53:00",
-    "Category": "category",
-    "ProductName": "Name",
-    "Model": "model",
-    "Price": 1.11,
-    "Brand": "brand name"
-}
