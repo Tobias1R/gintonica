@@ -55,14 +55,11 @@ func startMQ() {
 // @version 1.0
 // @description This is a sample server server.
 // @termsOfService http://swagger.io/terms/
-
 // @contact.name API Support
 // @contact.url http://www.swagger.io/support
 // @contact.email support@swagger.io
-
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html
-
 // @host localhost:8080
 // @BasePath /
 // @schemes http
@@ -80,8 +77,10 @@ func main() {
 		}
 		// update test
 		u.Name = "Jesus Junior"
-		u.Password = "oddlypuertorican"
+		// LOGIN INFO
 		u.Email = "j@j.sky"
+		u.Password = "oddlypuertorican"
+		// LOL-GIN INFO
 		if u.Update(true) {
 			println("name update")
 		}
