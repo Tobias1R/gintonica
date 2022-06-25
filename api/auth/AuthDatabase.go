@@ -22,12 +22,12 @@ type User struct {
 }
 
 var UserInterface interface {
-	CreateUser() User
+	Save() User
 	ChangePassword() bool
-	EditUser() User
+	Update() User
 }
 
-func (u User) CreateUser() User {
+func (u User) Save() User {
 	u.Password, _ = sec.HashPassword(u.Password)
 
 	c, _ := localdb.Connect()
@@ -41,7 +41,7 @@ func (u User) CreateUser() User {
 
 func ChangePassword() {}
 
-func EditUser() {}
+func Update() {}
 
 func ChangeStatus() {}
 
@@ -58,6 +58,6 @@ func CreateSuperUser(name string, email string, password string) (User, error) {
 		IsAdmin:   true,
 		Groups:    []string{"admin"},
 	}
-	u.CreateUser()
+	u.Save()
 	return u, nil
 }

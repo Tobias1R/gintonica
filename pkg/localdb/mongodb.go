@@ -52,6 +52,15 @@ func Connect() (mongo.Client, error) {
 	return *client, nil
 }
 
+func Db() (mongo.Database, error) {
+	c, err := Connect()
+	if err != nil {
+		panic(err)
+	}
+	db := c.Database("store")
+	return *db, nil
+}
+
 type ProductDb interface {
 	collection() string
 	list() []string

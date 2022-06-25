@@ -17,12 +17,6 @@ import (
 	"path/filepath"
 )
 
-func Albums(c *gin.Context) {
-	//fmt.Println("this is the albums return")
-	var results = []bson.M{{"msg": "this is the albums return"}}
-	c.IndentedJSON(http.StatusOK, results[0])
-}
-
 func visit(files *[]string) filepath.WalkFunc {
 	return func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -50,8 +44,8 @@ func ListDir(c *gin.Context) {
 }
 
 func ProductsList(c *gin.Context) {
-	client := localdb.MongoClient
-
+	client, _ := localdb.Connect()
+	defer client.Disconnect(context.TODO())
 	productsCollection := client.Database("store").Collection("Product")
 	// pipeline := []bson.M{
 	// 	{"$convert": bson.M{"timestamp": bson.M{"to": "date"}}},
@@ -68,7 +62,8 @@ func ProductsList(c *gin.Context) {
 
 func ProductCategoryList(c *gin.Context) {
 	requestedCategory := c.Param("category")
-	client := localdb.MongoClient
+	client, _ := localdb.Connect()
+	defer client.Disconnect(context.TODO())
 	productsCollection := client.Database("store").Collection("Product")
 	cursor, err := productsCollection.Find(context.TODO(), bson.D{{"category", requestedCategory}})
 	// convert the cursor result to bson
