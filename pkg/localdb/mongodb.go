@@ -2,12 +2,14 @@ package localdb
 
 import (
 	"os"
+	"time"
 
 	// DOT ENV
 	"github.com/joho/godotenv"
 	// mongo stuff(LOL)
 	"context"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -76,6 +78,75 @@ type Product struct {
 	Model     string              `json:"model"`
 	Price     float64             `json:"price"`
 	Brand     string              `json:"brand"`
+}
+
+type ProductInterface interface {
+	Save() string   // objectid
+	Update() string // object id
+	Delete() bool
+	GetProduct(id string) (Product, error)
+}
+
+func GetProduct(id string) (Product, error) {
+	var p Product
+	c, _ := Connect()
+	defer c.Disconnect(context.TODO())
+
+	coll := c.Database("store").Collection("Product")
+	vid, _ := primitive.ObjectIDFromHex(id)
+	filter := bson.M{"_id": vid}
+
+	err := coll.FindOne(context.TODO(), filter).Decode(&p)
+	if err != nil {
+		return p, err
+	}
+
+	return p, nil
+
+}
+
+func (p Product) Save() string {
+	p.ID = primitive.NewObjectID()
+	p.Timestamp = primitive.Timestamp{T: uint32(time.Now().Unix())}
+	c, _ := Connect()
+	defer c.Disconnect(context.TODO())
+
+	uCollection := c.Database("store").Collection("Product")
+	uCollection.InsertOne(context.TODO(), p)
+
+	return p.ID.String()
+}
+
+func (p Product) Update() string {
+	c, _ := Connect()
+	defer c.Disconnect(context.TODO())
+
+	coll := c.Database("store").Collection("Product")
+	id := p.ID
+	filter := bson.D{{"_id", id}}
+	p.Timestamp = primitive.Timestamp{T: uint32(time.Now().Unix())}
+	update := bson.D{{"$set", p}}
+	r, err := coll.UpdateOne(context.TODO(), filter, update)
+	if err != nil {
+		panic(err)
+	}
+	println(r)
+	return p.ID.String()
+}
+
+func (p Product) Delete() (bool, error) {
+	c, _ := Connect()
+	defer c.Disconnect(context.TODO())
+
+	coll := c.Database("store").Collection("Product")
+	id := p.ID
+	filter := bson.D{{"_id", id}}
+	r, err := coll.DeleteOne(context.TODO(), filter)
+	if err != nil {
+		return false, err
+	}
+	println(r)
+	return true, nil
 }
 
 type StorageUnit struct {

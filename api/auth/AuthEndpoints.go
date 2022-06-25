@@ -9,6 +9,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// login godoc
+// @Summary Do user login and return JWT token.
+// @Description Login, got it?.
+// @Tags root
+// @Accept */*
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /login [post]
+// @Param email query string true "The email of the citizen"
+// @Param password query string true "Citizen's password"
 func JWTAuthenticate(ctx *gin.Context) {
 	var loginService service.LoginService = service.MongoLoginService()
 	var jwtService service.JWTService = service.JWTAuthService()

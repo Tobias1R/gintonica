@@ -1,0 +1,234 @@
+basePath: /
+definitions:
+  localdb.Product:
+    properties:
+      brand:
+        type: string
+      category:
+        type: string
+      id:
+        type: string
+      model:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      timestamp:
+        $ref: '#/definitions/primitive.Timestamp'
+    type: object
+  primitive.Timestamp:
+    properties:
+      i:
+        type: integer
+      t:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: This is a sample server server.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Gin Swagger Example API
+  version: "1.0"
+paths:
+  /login:
+    post:
+      consumes:
+      - '*/*'
+      description: Login, got it?.
+      parameters:
+      - description: The email of the citizen
+        in: query
+        name: email
+        required: true
+        type: string
+      - description: Citizen's password
+        in: query
+        name: password
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Do user login and return JWT token.
+      tags:
+      - root
+  /products:
+    get:
+      consumes:
+      - '*/*'
+      description: Returns a list of products
+      parameters:
+      - description: 'Bearer '
+        in: header
+        name: Authorization
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/localdb.Product'
+            type: array
+      summary: All products.
+      tags:
+      - root
+    post:
+      consumes:
+      - '*/*'
+      description: Creates a product
+      parameters:
+      - description: 'Bearer '
+        in: header
+        name: Authorization
+        type: string
+      - description: The data
+        in: body
+        name: localdb.Product
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              $ref: '#/definitions/localdb.Product'
+            type: object
+      summary: Create Product document.
+      tags:
+      - root
+  /products/{id}:
+    delete:
+      consumes:
+      - '*/*'
+      description: For real dude, it catchs the document that represents the Product,
+        and update it.
+      parameters:
+      - description: 'Bearer '
+        in: header
+        name: Authorization
+        type: string
+      - description: The id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Delete Product document.
+      tags:
+      - root
+  /products/category/{category}:
+    get:
+      consumes:
+      - '*/*'
+      description: Returns a list of products from this category
+      parameters:
+      - description: 'Bearer '
+        in: header
+        name: Authorization
+        type: string
+      - description: The category you want
+        in: path
+        name: category
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/localdb.Product'
+            type: array
+      summary: All products from this category.
+      tags:
+      - root
+  /products/update/{id}:
+    patch:
+      consumes:
+      - '*/*'
+      description: For real dude, it catchs the document that represents the Product,
+        and update it.
+      parameters:
+      - description: 'Bearer '
+        in: header
+        name: Authorization
+        type: string
+      - description: The id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The data
+        in: body
+        name: localdb.Product{}
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              $ref: '#/definitions/localdb.Product'
+            type: object
+      summary: Update Product document.
+      tags:
+      - root
+  /products/view/{id}:
+    get:
+      consumes:
+      - '*/*'
+      description: For real dude, it catchs the document that represents the Product.
+      parameters:
+      - description: 'Bearer '
+        in: header
+        name: Authorization
+        type: string
+      - description: The id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              $ref: '#/definitions/localdb.Product'
+            type: object
+      summary: Retrieve Product document.
+      tags:
+      - root
+schemes:
+- http
+swagger: "2.0"
