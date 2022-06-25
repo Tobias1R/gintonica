@@ -6,6 +6,7 @@ import (
 
 	"github.com/Tobias1R/gintonica/pkg/localdb"
 	sec "github.com/Tobias1R/gintonica/pkg/security"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -24,7 +25,7 @@ type User struct {
 var UserInterface interface {
 	Save() User
 	ChangePassword() bool
-	Update() User
+	Update(changePassword bool) bool
 }
 
 func (u User) Save() User {
@@ -39,9 +40,52 @@ func (u User) Save() User {
 	return u
 }
 
-func ChangePassword() {}
+func (u User) ChangePassword(newPassword string) bool {
+	c, _ := localdb.Connect()
+	defer c.Disconnect(context.TODO())
 
-func Update() {}
+	u.Password, _ = sec.HashPassword(newPassword)
+
+	coll := c.Database("store").Collection("User")
+	id := u.ID //primitive.ObjectIDFromHex("62b65c3034c47578a007e8ab")
+	filter := bson.D{{"_id", id}}
+	update := bson.D{{"$set", bson.D{{"password", u.Password}}}}
+	_, err := coll.UpdateOne(context.TODO(), filter, update)
+	if err != nil {
+		panic(err)
+	}
+	return true
+}
+
+func (u User) Update(changePassword bool) bool {
+	c, _ := localdb.Connect()
+	defer c.Disconnect(context.TODO())
+
+	if changePassword {
+		u.Password, _ = sec.HashPassword(u.Password)
+	}
+
+	coll := c.Database("store").Collection("User")
+	id := u.ID
+	filter := bson.D{{"_id", id}}
+	// updata := bson.D{
+	// 	{"timestamp", primitive.Timestamp{T: uint32(time.Now().Unix())}},
+	// 	{"name", u.Name},
+	// 	{"email", u.Email},
+	// 	{"password", u.Password},
+	// 	{"status", u.Status},
+	// 	{"lastLogin", primitive.Timestamp{T: uint32(time.Now().Unix())}},
+	// }
+
+	update := bson.D{{"$set", u}}
+	r, err := coll.UpdateOne(context.TODO(), filter, update)
+	if err != nil {
+		panic(err)
+	}
+	println(r)
+	return true
+
+}
 
 func ChangeStatus() {}
 

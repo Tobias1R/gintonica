@@ -14,16 +14,17 @@ import (
 	"github.com/Tobias1R/gintonica/api"
 	sec "github.com/Tobias1R/gintonica/api/auth"
 	"github.com/Tobias1R/gintonica/pkg/localdb"
+	"github.com/Tobias1R/gintonica/src/mq"
 )
 
 func serve() {
 	// Load the .env file in the current directory
 	godotenv.Load()
-
+	// default router
 	router := gin.Default()
-
+	// api blueprint
 	api.RegisterAll(*router)
-
+	// vrum vrum
 	router.Run("localhost:8080")
 }
 
@@ -31,7 +32,6 @@ func installFixtures() {
 	mongoClient, _ := localdb.Connect()
 	defer mongoClient.Disconnect(context.TODO())
 	localdb.InstallFixtures(&mongoClient)
-
 }
 
 var (
@@ -46,6 +46,11 @@ func init() {
 	noServer = flag.Bool("noServer", false, "--noServer=true")
 }
 
+func startMQ() {
+	go mq.Consumer()
+	go mq.Publisher()
+}
+
 func main() {
 	flag.Parse()
 
@@ -54,7 +59,18 @@ func main() {
 	if createAdmin {
 		// highly secure user
 		u, _ := sec.CreateSuperUser("Ozymandias", "email@gmail.com", "password")
-		println("User " + u.Name + " created")
+		// password change test
+		if u.ChangePassword("another") {
+			println("password changed")
+		}
+		// update test
+		u.Name = "Jesus Junior"
+		u.Password = "oddlypuertorican"
+		u.Email = "j@j.sky"
+		if u.Update(true) {
+			println("name update")
+		}
+		println("User " + u.Email + " created " + " with password " + u.Password)
 	}
 
 	if *installFixturesDb {
@@ -64,6 +80,7 @@ func main() {
 
 	if !*noServer {
 		// serve or not?
+		startMQ()
 		defer serve()
 	}
 
