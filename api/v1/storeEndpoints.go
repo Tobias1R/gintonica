@@ -287,3 +287,8 @@ func TaskStatus(c *gin.Context) {
 	t.UnmarshalBinary([]byte(res))
 	c.IndentedJSON(http.StatusOK, t)
 }
+
+func TaskQueue(c *gin.Context) {
+	res := workers.QueueControlObject.Info()
+	c.IndentedJSON(http.StatusOK, res)
+}

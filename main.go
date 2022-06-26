@@ -61,6 +61,8 @@ func startMQ() {
 
 	w.Register(&t, channelName)
 	go w.Start()
+	workers.SetQueueControl(&w)
+
 }
 
 // @title Gin Swagger Example API

@@ -37,23 +37,24 @@ type RunningTask struct {
 }
 
 type worker struct {
-	function       func(task *RunningTask) error
-	queueName      string
-	queue          amqp.Queue
-	pid            int64
-	status         string
-	messageChannel <-chan amqp.Delivery
-	tasks          map[string]*RunningTask
-	isAlive        bool
-	requestStop    bool
-	connection     *amqp.Connection
-	channel        *amqp.Channel
+	function              func(task *RunningTask) error
+	queueName             string
+	queue                 amqp.Queue
+	pid                   int64
+	status                string
+	messageChannel        <-chan amqp.Delivery
+	tasks                 map[string]*RunningTask
+	isAlive               bool
+	requestStop           bool
+	connection            *amqp.Connection
+	channel               *amqp.Channel
+	receivedMessages      []string
+	totalReceivedMessages int64
 }
 
-type taskQueue struct {
+type queue struct {
 	name    string
 	workers []worker
-	broker  *amqp.Connection
 }
 
 type IRunningTask interface {
@@ -90,27 +91,33 @@ func (t *RunningTask) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-// func (t *RunningTask) Run(j []byte, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error {
-// 	ew = errworker.NewErrWorkgroup(2, true)
-// 	ew.Go(func() error {
-
-// 		t.Function(j, t)
-// 		task := *t
-// 		taskChannel <- task
-// 		println("AFTER CALL")
-// 		return nil
-// 	})
-// 	println("RUN FLAG")
-// 	return ew.Wait()
-// }
-
 type Worker interface {
 	connect() *amqp.Connection
+	receiveMessage(t *RunningTask) error
 	Start() // return pid
 	Stop()
 	Register(t *RunningTask) error
 	NewWorker(q string) worker
 	Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error
+	Info() interface{}
+}
+
+func (w *worker) Info() interface{} {
+	type structPayload struct {
+		Status     bool  `json:"status"`
+		TotalTasks int64 `json:"totalTasks"`
+	}
+	i := structPayload{}
+	i.Status = w.isAlive
+	i.TotalTasks = w.totalReceivedMessages
+
+	return i
+}
+
+func (w *worker) receiveMessage(t *RunningTask) error {
+	w.totalReceivedMessages++
+	w.receivedMessages = append(w.receivedMessages, t.id)
+	return nil
 }
 
 func (w *worker) Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error {
@@ -194,6 +201,7 @@ func (w *worker) Stop() {
 }
 
 func (w *worker) Start() {
+	SetQueueControl(w)
 	// start worker
 	w.connect()
 	println("WORKER PID: ", os.Getpid())
@@ -204,7 +212,7 @@ func (w *worker) Start() {
 
 	errGroup := sync.WaitGroup{}
 	errGroup.Add(1)
-	var receivedMessages []string
+
 	go func() {
 		for err := range errc {
 			status = statusError
@@ -247,18 +255,20 @@ func (w *worker) Start() {
 						log.Printf("Error acknowledging message : %s", err)
 					} else {
 						log.Printf("Acknowledged message")
-						receivedMessages = append(receivedMessages, d.MessageId)
+						w.receiveMessage(t)
 					}
 				}
 
-				println("Worker alive", os.Getpid())
 				time.Sleep(1 * time.Second)
 			}
 		}()
 		// redis time
 		go func() {
 			for {
-				for _, message := range receivedMessages {
+				if w.requestStop {
+					break
+				}
+				for _, message := range w.receivedMessages {
 					val, err := rdb.Get(context.Background(), message).Result()
 					if err != nil {
 						log.Printf("Message NOT stored in redis: %s", message)
@@ -273,16 +283,17 @@ func (w *worker) Start() {
 						errc <- errRun
 					}
 
-					println("TASK STATUS AFTER RUN", t.Status)
+					//println("TASK STATUS AFTER RUN", t.Status)
 
-					fmt.Println("key", t)
 					time.Sleep(1 * time.Second)
+
+					// delete from redis
 					errDel := rdb.Del(context.Background(), message).Err()
 					if errDel != nil {
 						log.Printf("Couldn't delete message stored in redis: %s", message)
 					}
 
-					receivedMessages = helpers.RemoveStringFromArray(receivedMessages, message)
+					w.receivedMessages = helpers.RemoveStringFromArray(w.receivedMessages, message)
 					close(taskChannel)
 				}
 			}
@@ -302,9 +313,27 @@ func (w *worker) Start() {
 }
 
 type Queue interface {
-	Enqueue(task *interface{}) (*interface{}, error)
+	GetInstance(name string) queue
 	StopWorker(w worker) (*interface{}, error)
 	StartWorker(w worker) (*interface{}, error)
-	Connect() (*amqp.Channel, error)
-	AddWorker(w *worker) string
+	AddWorker(w *worker) error
+	Status()
+}
+
+func GetQueueInstance(name string) queue {
+	return queue{
+		name:    name,
+		workers: []worker{},
+	}
+}
+
+func (q *queue) AddWorker(w *worker) error {
+	q.workers = append(q.workers, *w)
+	return nil
+}
+
+var QueueControlObject worker
+
+func SetQueueControl(w *worker) {
+	QueueControlObject = *w
 }
