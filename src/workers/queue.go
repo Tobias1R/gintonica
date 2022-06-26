@@ -1,6 +1,8 @@
 package workers
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	cnf "github.com/Tobias1R/gintonica/config"
+	"github.com/Tobias1R/gintonica/pkg/helpers"
 	"github.com/guntenbein/goconcurrency/errworker"
 	"github.com/streadway/amqp"
 )
@@ -26,19 +29,21 @@ func handleError(err error, msg string) {
 }
 
 type RunningTask struct {
-	Function func(j []byte, task *RunningTask) error
-	Order    int64
-	Channel  string
-	Status   string
+	id      string
+	Order   int64
+	Channel string
+	Status  string
+	Data    []byte
 }
 
 type worker struct {
+	function       func(task *RunningTask) error
 	queueName      string
 	queue          amqp.Queue
 	pid            int64
 	status         string
 	messageChannel <-chan amqp.Delivery
-	tasks          map[string]RunningTask
+	tasks          map[string]*RunningTask
 	isAlive        bool
 	requestStop    bool
 	connection     *amqp.Connection
@@ -51,16 +56,67 @@ type taskQueue struct {
 	broker  *amqp.Connection
 }
 
-type Task interface {
-	GetStatus(t *RunningTask) string
-	Run(j []byte, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error
+type IRunningTask interface {
+	GetStatus() error
+	MarshalBinary() ([]byte, error)
+	UnmarshalBinary(data []byte) error
+	SetStatus(status string) error
+	UpdateRedis() error
 }
 
-func (t *RunningTask) Run(j []byte, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error {
+func (t *RunningTask) UpdateRedis() error {
+	rdb := getRedisClient()
+	jsonData, _ := t.MarshalBinary()
+	err := rdb.Set(context.Background(), t.id, jsonData, 0).Err()
+	if err != nil {
+		log.Printf("Error connecting to Redis : %s", err)
+	}
+	return err
+}
+
+func (t *RunningTask) SetStatus(status string) error {
+	t.Status = status
+	return t.UpdateRedis()
+}
+
+func (t RunningTask) MarshalBinary() ([]byte, error) {
+	return json.Marshal(t)
+}
+
+func (t *RunningTask) UnmarshalBinary(data []byte) error {
+	if err := json.Unmarshal(data, &t); err != nil {
+		return err
+	}
+	return nil
+}
+
+// func (t *RunningTask) Run(j []byte, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error {
+// 	ew = errworker.NewErrWorkgroup(2, true)
+// 	ew.Go(func() error {
+
+// 		t.Function(j, t)
+// 		task := *t
+// 		taskChannel <- task
+// 		println("AFTER CALL")
+// 		return nil
+// 	})
+// 	println("RUN FLAG")
+// 	return ew.Wait()
+// }
+
+type Worker interface {
+	connect() *amqp.Connection
+	Start() // return pid
+	Stop()
+	Register(t *RunningTask) error
+	NewWorker(q string) worker
+	Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error
+}
+
+func (w *worker) Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error {
 	ew = errworker.NewErrWorkgroup(2, true)
 	ew.Go(func() error {
-
-		t.Function(j, t)
+		w.function(t)
 		task := *t
 		taskChannel <- task
 		println("AFTER CALL")
@@ -70,23 +126,16 @@ func (t *RunningTask) Run(j []byte, taskChannel chan<- RunningTask, ew errworker
 	return ew.Wait()
 }
 
-type Worker interface {
-	connect() *amqp.Connection
-	Start() // return pid
-	Stop()
-	Register(t *RunningTask) error
-	NewWorker(q string) worker
-}
-
-func NewWorker(q string) worker {
+func NewWorker(q string, target func(task *RunningTask) error) worker {
 	// return a new worker for given queue q
 	return worker{
+		function:       target,
 		queueName:      q,
 		queue:          amqp.Queue{},
 		pid:            0,
 		status:         "",
 		messageChannel: make(<-chan amqp.Delivery),
-		tasks:          map[string]RunningTask{},
+		tasks:          map[string]*RunningTask{},
 	}
 }
 
@@ -119,24 +168,33 @@ func (w *worker) connect() {
 
 }
 
-func TestME(j []byte, t *RunningTask) error {
-	println("RECEIVED BODY", string(j))
+func TestME(t *RunningTask) error {
+	println("RECEIVED BODY", string(t.Data))
 	println("TASK PID: ", os.Getpid())
-	time.Sleep(5 * time.Second)
-	t.Status = "INTERNAL DONE"
+	time.Sleep(10 * time.Second)
+	t.SetStatus("stage 1")
+	time.Sleep(10 * time.Second)
+	t.SetStatus("stage 2")
+	time.Sleep(10 * time.Second)
+	t.SetStatus("stage 3")
+	time.Sleep(10 * time.Second)
+	t.SetStatus("INTERNAL DONE")
 	return nil
 }
 
-func (w *worker) Register(t RunningTask, channel string) error {
+func (w *worker) Register(t *RunningTask, channel string) error {
+	// register task for worker
 	w.tasks[channel] = t
 	return nil
 }
 
 func (w *worker) Stop() {
+	// init stoping process
 	w.requestStop = true
 }
 
 func (w *worker) Start() {
+	// start worker
 	w.connect()
 	println("WORKER PID: ", os.Getpid())
 
@@ -146,7 +204,7 @@ func (w *worker) Start() {
 
 	errGroup := sync.WaitGroup{}
 	errGroup.Add(1)
-
+	var receivedMessages []string
 	go func() {
 		for err := range errc {
 			status = statusError
@@ -156,7 +214,7 @@ func (w *worker) Start() {
 	}()
 	fmt.Println("worker status ", !w.connection.IsClosed(), string(status))
 	taskGroup := sync.WaitGroup{}
-
+	rdb := getRedisClient()
 	for c, t := range w.tasks {
 		taskGroup.Add(1)
 		if w.requestStop {
@@ -173,26 +231,60 @@ func (w *worker) Start() {
 				w.isAlive = true
 
 				for d := range w.messageChannel {
-					taskChannel := make(chan RunningTask, 1)
-					log.Printf("Received a message: %s", d.MessageId)
-					t.Status = "RUNNING"
 
-					if errRun := t.Run(d.Body, taskChannel, ew); errRun != nil {
-						errc <- errRun
+					log.Printf("Received a message: %s", d.MessageId)
+					t.Status = "PENDING"
+					t.id = d.MessageId
+					t.Data = d.Body
+					jsonData, _ := t.MarshalBinary()
+					err := rdb.Set(context.Background(), d.MessageId, jsonData, 0).Err()
+					if err != nil {
+						log.Printf("Error connecting to Redis : %s", err)
+						break
 					}
-					println("TASK STATUS AFTER RUN", t.Status)
-					close(taskChannel)
+					// rabbitMQ ackowledegment
 					if err := d.Ack(false); err != nil {
 						log.Printf("Error acknowledging message : %s", err)
-						t.Status = "FAIL"
 					} else {
 						log.Printf("Acknowledged message")
-						t.Status = "DONE"
+						receivedMessages = append(receivedMessages, d.MessageId)
 					}
 				}
 
 				println("Worker alive", os.Getpid())
 				time.Sleep(1 * time.Second)
+			}
+		}()
+		// redis time
+		go func() {
+			for {
+				for _, message := range receivedMessages {
+					val, err := rdb.Get(context.Background(), message).Result()
+					if err != nil {
+						log.Printf("Message NOT stored in redis: %s", message)
+					}
+					var t RunningTask
+					t.UnmarshalBinary([]byte(val))
+					taskChannel := make(chan RunningTask, 1)
+
+					// task run
+					log.Printf("Message stored in redis: %s", message)
+					if errRun := w.Run(&t, taskChannel, ew); errRun != nil {
+						errc <- errRun
+					}
+
+					println("TASK STATUS AFTER RUN", t.Status)
+
+					fmt.Println("key", t)
+					time.Sleep(1 * time.Second)
+					errDel := rdb.Del(context.Background(), message).Err()
+					if errDel != nil {
+						log.Printf("Couldn't delete message stored in redis: %s", message)
+					}
+
+					receivedMessages = helpers.RemoveStringFromArray(receivedMessages, message)
+					close(taskChannel)
+				}
 			}
 		}()
 		log.Println("starting worker for queue: " + c)

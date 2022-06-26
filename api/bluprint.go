@@ -31,4 +31,5 @@ func RegisterAll(router gin.Engine) {
 
 	router.POST("/login", sec.JWTAuthenticate)
 	router.GET("/tt/:msg", v1.TestQueue)
+	router.GET("/task/:taskId", v1.TaskStatus)
 }

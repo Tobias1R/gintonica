@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tobias1R/gintonica/pkg/localdb"
 	"github.com/Tobias1R/gintonica/src/mq"
+	"github.com/Tobias1R/gintonica/src/workers"
 	"github.com/gin-gonic/gin"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -273,4 +274,16 @@ func TestQueue(c *gin.Context) {
 	msg := c.Param("msg")
 	res := mq.Publisher(msg)
 	c.IndentedJSON(http.StatusOK, res)
+}
+
+func TaskStatus(c *gin.Context) {
+	taskId := c.Param("msg")
+	rdb := workers.GetRedisClient()
+	res, err := rdb.Get(context.Background(), taskId).Result()
+	if err != nil {
+		log.Printf("Message NOT stored in redis: %s", taskId)
+	}
+	var t workers.RunningTask
+	t.UnmarshalBinary([]byte(res))
+	c.IndentedJSON(http.StatusOK, t)
 }

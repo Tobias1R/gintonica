@@ -50,15 +50,16 @@ func startMQ() {
 	//go mq.Consumer()
 	//go mq.Publisher()
 	//workers.StartWorkerDirectoryScan()
-	w := workers.NewWorker("testao")
+	const channelName string = "testao"
+	w := workers.NewWorker(channelName, workers.TestME)
 	t := workers.RunningTask{
-		Function: workers.TestME,
-		Order:    0,
-		Channel:  "testao",
-		Status:   "PENDING",
+		Order:   0,
+		Channel: channelName,
+		Status:  "PENDING",
+		Data:    []byte(""),
 	}
 
-	w.Register(t, "testao")
+	w.Register(&t, channelName)
 	go w.Start()
 }
 
