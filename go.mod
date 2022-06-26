@@ -5,6 +5,10 @@ go 1.18
 require (
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gin-gonic/gin v1.8.1
+	github.com/gocelery/gocelery v0.0.0-20201111034804-825d89059344
+	github.com/gomodule/redigo v2.0.0+incompatible
+	github.com/google/uuid v1.3.0
+	github.com/guntenbein/goconcurrency v0.0.0-20200606131830-319f6e82b6a9
 	github.com/joho/godotenv v1.4.0
 	github.com/streadway/amqp v1.0.0
 	github.com/swaggo/files v0.0.0-20220610200504-28940afbdbfe
@@ -39,6 +43,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b // indirect
 	github.com/ugorji/go/codec v1.2.7 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.0.2 // indirect

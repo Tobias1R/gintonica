@@ -14,7 +14,7 @@ import (
 	"github.com/Tobias1R/gintonica/api"
 	sec "github.com/Tobias1R/gintonica/api/auth"
 	"github.com/Tobias1R/gintonica/pkg/localdb"
-	"github.com/Tobias1R/gintonica/src/mq"
+	"github.com/Tobias1R/gintonica/src/workers"
 )
 
 func serve() {
@@ -47,8 +47,19 @@ func init() {
 }
 
 func startMQ() {
-	go mq.Consumer()
-	go mq.Publisher()
+	//go mq.Consumer()
+	//go mq.Publisher()
+	//workers.StartWorkerDirectoryScan()
+	w := workers.NewWorker("testao")
+	t := workers.RunningTask{
+		Function: workers.TestME,
+		Order:    0,
+		Channel:  "testao",
+		Status:   "PENDING",
+	}
+
+	w.Register(t, "testao")
+	go w.Start()
 }
 
 // @title Gin Swagger Example API
@@ -94,7 +105,7 @@ func main() {
 
 	if !*noServer {
 		// serve or not?
-		//startMQ()
+		startMQ()
 		defer serve()
 	}
 

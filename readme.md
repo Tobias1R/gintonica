@@ -29,8 +29,23 @@ go run . --installFixturesDb=true --noServer=true
 ```bash
 go run . --createSuperUser=true --noServer=true
 ```
+## generate swagger
+```bash
+go get -v github.com/swaggo/swag/cmd/swag
+go get -v github.com/swaggo/gin-swagger
+go get -v github.com/swaggo/files
+swag init --parseDependency -g main.go --output docs/gintonica
+```
 ## run and serve
 ```bash
 go run .
 ```
-feeling ready!
+
+## features
+
+| Descr   | Features                                      | Status |
+|---------|-----------------------------------------------|--------|
+| Products|[Create,Update,Retrieve,Delete,Filter Category] | OK    |
+| Documentation | Swagger                                 | OK     |
+| JWT Authentication | Login                              | OK     |
+

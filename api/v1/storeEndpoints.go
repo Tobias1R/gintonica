@@ -3,18 +3,24 @@ package v1
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
+	"time"
 
 	// GIN
 	"net/http"
 
 	"github.com/Tobias1R/gintonica/pkg/localdb"
+	"github.com/Tobias1R/gintonica/src/mq"
 	"github.com/gin-gonic/gin"
 
 	"go.mongodb.org/mongo-driver/bson"
 
 	"log"
 	"path/filepath"
+
+	"github.com/gocelery/gocelery"
+	"github.com/gomodule/redigo/redis"
 )
 
 func visit(files *[]string) filepath.WalkFunc {
@@ -207,4 +213,64 @@ func ProductCreate(c *gin.Context) {
 		msg := p.Save()
 		c.IndentedJSON(http.StatusOK, msg)
 	}
+}
+
+func ListDirCelery(c *gin.Context) {
+	var dir string = "/home/ozy/Downloads"
+	// create redis connection pool
+	redisPool := &redis.Pool{
+		MaxIdle:     3,                 // maximum number of idle connections in the pool
+		MaxActive:   0,                 // maximum number of connections allocated by the pool at a given time
+		IdleTimeout: 240 * time.Second, // close connections after remaining idle for this duration
+		Dial: func() (redis.Conn, error) {
+			c, err := redis.DialURL("redis://redis:eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81@172.20.0.5:6379")
+			if err != nil {
+				return nil, err
+			}
+			return c, err
+		},
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			_, err := c.Do("PING")
+			return err
+		},
+	}
+
+	// initialize celery client
+	cli, _ := gocelery.NewCeleryClient(
+		gocelery.NewRedisBroker(redisPool),
+		&gocelery.RedisCeleryBackend{Pool: redisPool},
+		1,
+	)
+
+	// prepare arguments
+	taskName := "directoryScan"
+	argA := dir
+	argB := rand.Intn(10)
+
+	// run task
+	asyncResult, err := cli.DelayKwargs(
+		taskName,
+		map[string]interface{}{
+			"directory": argA,
+			"scanTime":  argB,
+		},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	// get results from backend with timeout
+	res, err := asyncResult.Get(10 * time.Second)
+	if err != nil {
+		panic(err)
+	}
+
+	c.IndentedJSON(http.StatusOK, res)
+
+}
+
+func TestQueue(c *gin.Context) {
+	msg := c.Param("msg")
+	res := mq.Publisher(msg)
+	c.IndentedJSON(http.StatusOK, res)
 }

@@ -15,6 +15,7 @@ import (
 )
 
 func RegisterAll(router gin.Engine) {
+
 	authorized := router.Group("/")
 	authorized.Use(mw.AuthorizeJWT())
 	{
@@ -29,4 +30,5 @@ func RegisterAll(router gin.Engine) {
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, url))
 
 	router.POST("/login", sec.JWTAuthenticate)
+	router.GET("/tt/:msg", v1.TestQueue)
 }
