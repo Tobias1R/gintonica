@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -16,9 +17,13 @@ import (
 )
 
 const (
-	n           = 2
-	statusOK    = 0
-	statusError = 1
+	n                   = 2
+	statusOK            = 0
+	statusError         = 1
+	TASK_STATUS_PENDING = "PENDING"
+	TASK_STATUS_RUNNING = "RUNNING"
+	TASK_STATUS_DONE    = "DONE"
+	TASK_STATUS_ACK     = "ACK"
 )
 
 func handleError(err error, msg string) {
@@ -40,7 +45,7 @@ type worker struct {
 	function              func(task *RunningTask) error
 	queueName             string
 	queue                 amqp.Queue
-	pid                   int64
+	pid                   int
 	status                string
 	messageChannel        <-chan amqp.Delivery
 	tasks                 map[string]*RunningTask
@@ -50,6 +55,7 @@ type worker struct {
 	channel               *amqp.Channel
 	receivedMessages      []string
 	totalReceivedMessages int64
+	runs                  int64
 }
 
 type queue struct {
@@ -104,10 +110,14 @@ type Worker interface {
 
 func (w *worker) Info() interface{} {
 	type structPayload struct {
-		Status        string            `json:"status"`
-		TotalMessages int64             `json:"totalReceivedMessages"`
-		Tasks         map[string]string `json:"taskWorkers"`
-		Messages      []string          `json:"pendingJobs"`
+		Status           string            `json:"status"`
+		TotalMessages    int64             `json:"totalReceivedMessages"`
+		Tasks            map[string]string `json:"taskWorkers"`
+		Messages         []string          `json:"pendingJobs"`
+		Pid              int               `json:"pid"`
+		Handler          string            `json:"handler"`
+		TotalPendingJobs int               `json:"totalPendingJobs"`
+		Runs             int64             `json:"runs"`
 	}
 	i := structPayload{}
 	i.Status = w.status
@@ -118,6 +128,12 @@ func (w *worker) Info() interface{} {
 	}
 	i.Tasks = tasks
 	i.Messages = w.receivedMessages
+	i.Pid = w.pid
+	_, file, _, _ := runtime.Caller(0)
+	i.Handler = string(file)
+	i.TotalPendingJobs = len(w.receivedMessages)
+	i.Runs = w.runs
+
 	return i
 }
 
@@ -137,6 +153,7 @@ func (w *worker) Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworke
 		return nil
 	})
 	println("RUN FLAG")
+	w.runs++
 	return ew.Wait()
 }
 
@@ -198,7 +215,7 @@ func TestME(t *RunningTask) error {
 	time.Sleep(10 * time.Second)
 	t.SetStatus("stage 3")
 	time.Sleep(10 * time.Second)
-	t.SetStatus("INTERNAL DONE")
+	t.SetStatus(TASK_STATUS_DONE)
 	return nil
 }
 
@@ -218,7 +235,8 @@ func (w *worker) Start() {
 
 	// start worker
 	w.connect()
-	println("WORKER PID: ", os.Getpid())
+	w.pid = os.Getpid()
+	println("WORKER PID: ", w.pid)
 
 	stopChan := make(chan bool)
 	errc := make(chan error)
@@ -256,7 +274,7 @@ func (w *worker) Start() {
 				for d := range w.messageChannel {
 
 					log.Printf("Received a message: %s", d.MessageId)
-					t.Status = "PENDING"
+					t.Status = TASK_STATUS_PENDING
 					t.id = d.MessageId
 					t.Data = d.Body
 					jsonData, _ := t.MarshalBinary()
@@ -288,29 +306,35 @@ func (w *worker) Start() {
 					val, err := rdb.Get(context.Background(), message).Result()
 					if err != nil {
 						log.Printf("Message NOT stored in redis: %s", message)
+					} else {
+						var t RunningTask
+						t.UnmarshalBinary([]byte(val))
+						taskChannel := make(chan RunningTask, 1)
+
+						// task run
+						if t.Status == TASK_STATUS_PENDING {
+							log.Printf("Message stored in redis: %s", message)
+							if errRun := w.Run(&t, taskChannel, ew); errRun != nil {
+								errc <- errRun
+							}
+						}
+
+						if t.Status == TASK_STATUS_DONE {
+							// delete from redis
+							errDel := rdb.Del(context.Background(), message).Err()
+							if errDel != nil {
+								log.Printf("Couldn't delete message stored in redis: %s", message)
+							}
+
+							w.receivedMessages = helpers.RemoveStringFromArray(w.receivedMessages, message)
+						}
+
+						//println("TASK STATUS AFTER RUN", t.Status)
+
+						close(taskChannel)
+						time.Sleep(1 * time.Second)
 					}
-					var t RunningTask
-					t.UnmarshalBinary([]byte(val))
-					taskChannel := make(chan RunningTask, 1)
 
-					// task run
-					log.Printf("Message stored in redis: %s", message)
-					if errRun := w.Run(&t, taskChannel, ew); errRun != nil {
-						errc <- errRun
-					}
-
-					//println("TASK STATUS AFTER RUN", t.Status)
-
-					time.Sleep(1 * time.Second)
-
-					// delete from redis
-					errDel := rdb.Del(context.Background(), message).Err()
-					if errDel != nil {
-						log.Printf("Couldn't delete message stored in redis: %s", message)
-					}
-
-					w.receivedMessages = helpers.RemoveStringFromArray(w.receivedMessages, message)
-					close(taskChannel)
 				}
 			}
 		}()
