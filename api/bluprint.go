@@ -30,7 +30,10 @@ func RegisterAll(router gin.Engine) {
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, url))
 
 	router.POST("/login", sec.JWTAuthenticate)
+	// start a new task
 	router.GET("/tt/:msg", v1.TestQueue)
+	// watch task
 	router.GET("/task/:taskId", v1.TaskStatus)
+	// watch queue
 	router.GET("/qc", v1.TaskQueue)
 }
