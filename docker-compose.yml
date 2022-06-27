@@ -1,13 +1,20 @@
 # Use root/example as user/password credentials
-version: '3.1'
+version: '3.5'
+
+networks:
+  gintonica_default:
+    name: gintonica_default
+    driver: bridge
 
 services:
-
   mongo:
     image: mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: example
+    networks:
+      gintonica_default:
+        ipv4_address: 172.20.0.2
 
   mongo-express:
     image: mongo-express
@@ -17,13 +24,18 @@ services:
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: example
       ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo:27017/
-
+    networks:
+      gintonica_default:
+        ipv4_address: 172.20.0.3
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: 'rabbitmq'
     ports:
         - 5672:5672
         - 15672:15672  
+    networks:
+      gintonica_default:
+        ipv4_address: 172.20.0.4
   
   redis:
     image: redis:6.2-alpine
@@ -33,6 +45,9 @@ services:
     command: redis-server --save 20 1 --loglevel warning --requirepass eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81
     volumes: 
       - redis:/data
+    networks:
+      gintonica_default:
+        ipv4_address: 172.20.0.5
 volumes:
   redis:
     driver: local

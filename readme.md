@@ -15,6 +15,7 @@ Gintonica is a learning project under construction with:
 - Jwt
 - RabbitMQ
 - Swagger
+- Redis
 
 ## setup mongo and rabbitMQ
 ```bash
@@ -48,4 +49,5 @@ go run .
 | Products|[Create,Update,Retrieve,Delete,Filter Category] | OK    |
 | Documentation | Swagger                                 | OK     |
 | JWT Authentication | Login                              | OK     |
+
 

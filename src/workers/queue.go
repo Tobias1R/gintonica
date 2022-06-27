@@ -104,13 +104,20 @@ type Worker interface {
 
 func (w *worker) Info() interface{} {
 	type structPayload struct {
-		Status     bool  `json:"status"`
-		TotalTasks int64 `json:"totalTasks"`
+		Status        string            `json:"status"`
+		TotalMessages int64             `json:"totalReceivedMessages"`
+		Tasks         map[string]string `json:"taskWorkers"`
+		Messages      []string          `json:"pendingJobs"`
 	}
 	i := structPayload{}
-	i.Status = w.isAlive
-	i.TotalTasks = w.totalReceivedMessages
-
+	i.Status = w.status
+	i.TotalMessages = w.totalReceivedMessages
+	tasks := make(map[string]string)
+	for _, t := range w.tasks {
+		tasks[t.id] = t.Status
+	}
+	i.Tasks = tasks
+	i.Messages = w.receivedMessages
 	return i
 }
 
@@ -136,13 +143,19 @@ func (w *worker) Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworke
 func NewWorker(q string, target func(task *RunningTask) error) worker {
 	// return a new worker for given queue q
 	return worker{
-		function:       target,
-		queueName:      q,
-		queue:          amqp.Queue{},
-		pid:            0,
-		status:         "",
-		messageChannel: make(<-chan amqp.Delivery),
-		tasks:          map[string]*RunningTask{},
+		function:              target,
+		queueName:             q,
+		queue:                 amqp.Queue{},
+		pid:                   0,
+		status:                "INITIALIZING",
+		messageChannel:        make(<-chan amqp.Delivery),
+		tasks:                 map[string]*RunningTask{},
+		isAlive:               false,
+		requestStop:           false,
+		connection:            &amqp.Connection{},
+		channel:               &amqp.Channel{},
+		receivedMessages:      []string{},
+		totalReceivedMessages: 0,
 	}
 }
 
@@ -201,7 +214,8 @@ func (w *worker) Stop() {
 }
 
 func (w *worker) Start() {
-	SetQueueControl(w)
+	w.status = "ON THE BEGNNING"
+
 	// start worker
 	w.connect()
 	println("WORKER PID: ", os.Getpid())
@@ -232,6 +246,7 @@ func (w *worker) Start() {
 
 		// rabbit consumer
 		go func() {
+			// Ad infinitum
 			for {
 				if w.requestStop {
 					break
@@ -264,6 +279,7 @@ func (w *worker) Start() {
 		}()
 		// redis time
 		go func() {
+			// Ad infinitum (lol)
 			for {
 				if w.requestStop {
 					break
@@ -301,6 +317,9 @@ func (w *worker) Start() {
 		log.Println("starting worker for queue: " + c)
 
 	}
+
+	SetQueueControl(w)
+	w.status = "RUNNING BULL"
 	taskGroup.Done()
 
 	close(errc)
@@ -310,6 +329,7 @@ func (w *worker) Start() {
 	// Stop for program termination
 	<-stopChan
 	w.connection.Close()
+
 }
 
 type Queue interface {
@@ -332,8 +352,8 @@ func (q *queue) AddWorker(w *worker) error {
 	return nil
 }
 
-var QueueControlObject worker
+var QueueControlObject *worker
 
 func SetQueueControl(w *worker) {
-	QueueControlObject = *w
+	QueueControlObject = w
 }
