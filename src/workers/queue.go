@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -12,7 +13,9 @@ import (
 
 	cnf "github.com/Tobias1R/gintonica/config"
 	"github.com/Tobias1R/gintonica/pkg/helpers"
+	"github.com/google/uuid"
 	"github.com/guntenbein/goconcurrency/errworker"
+
 	"github.com/streadway/amqp"
 )
 
@@ -24,6 +27,7 @@ const (
 	TASK_STATUS_RUNNING = "RUNNING"
 	TASK_STATUS_DONE    = "DONE"
 	TASK_STATUS_ACK     = "ACK"
+	MaxWorkers          = 5
 )
 
 func handleError(err error, msg string) {
@@ -34,33 +38,36 @@ func handleError(err error, msg string) {
 }
 
 type RunningTask struct {
-	id      string
-	Order   int64
-	Channel string
-	Status  string
-	Data    []byte
+	id             string
+	Order          int64
+	Channel        string
+	Status         string
+	Data           []byte
+	RunnningWorker string
 }
 
 type worker struct {
 	function              func(task *RunningTask) error
-	queueName             string
-	queue                 amqp.Queue
 	pid                   int
 	status                string
-	messageChannel        <-chan amqp.Delivery
 	tasks                 map[string]*RunningTask
 	isAlive               bool
 	requestStop           bool
-	connection            *amqp.Connection
-	channel               *amqp.Channel
 	receivedMessages      []string
 	totalReceivedMessages int64
 	runs                  int64
+	workerId              string
+	amqpQueue             amqp.Queue
+	connection            *amqp.Connection
+	channel               *amqp.Channel
+	queueName             string
+	messageChannel        <-chan amqp.Delivery
 }
 
 type queue struct {
-	name    string
-	workers []worker
+	name        string
+	workers     []worker
+	requestStop bool
 }
 
 type IRunningTask interface {
@@ -69,16 +76,29 @@ type IRunningTask interface {
 	UnmarshalBinary(data []byte) error
 	SetStatus(status string) error
 	UpdateRedis() error
+	SetWorker(w *worker) error
 }
 
 func (t *RunningTask) UpdateRedis() error {
 	rdb := getRedisClient()
-	jsonData, _ := t.MarshalBinary()
-	err := rdb.Set(context.Background(), t.id, jsonData, 0).Err()
+	defer rdb.Close()
+
+	key, err := rdb.Get(context.Background(), t.id).Result()
 	if err != nil {
-		log.Printf("Error connecting to Redis : %s", err)
+		log.Printf("UPDATE Message NOT stored in redis: %s", key)
+		return err
+	}
+	jsonData, _ := t.MarshalBinary()
+	errS := rdb.Set(context.Background(), t.id, jsonData, 0).Err()
+	if errS != nil {
+		log.Printf("Error connecting to Redis : %s", errS)
 	}
 	return err
+}
+
+func (t *RunningTask) SetWorker(w *worker) error {
+	t.RunnningWorker = w.workerId
+	return t.UpdateRedis()
 }
 
 func (t *RunningTask) SetStatus(status string) error {
@@ -100,45 +120,59 @@ func (t *RunningTask) UnmarshalBinary(data []byte) error {
 type Worker interface {
 	connect() *amqp.Connection
 	receiveMessage(t *RunningTask) error
-	Start() // return pid
+	//Start()
 	Stop()
 	Register(t *RunningTask) error
 	NewWorker(q string) worker
 	Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error
 	Info() interface{}
+	removeMessage(message string) error
+	RunFromRedis(key *string) error
+}
+
+func (w *worker) removeMessage(message string) error {
+	w.receivedMessages = helpers.RemoveStringFromArray(w.receivedMessages, message)
+	return nil
 }
 
 func (w *worker) Info() interface{} {
 	type structPayload struct {
-		Status           string            `json:"status"`
-		TotalMessages    int64             `json:"totalReceivedMessages"`
-		Tasks            map[string]string `json:"taskWorkers"`
-		Messages         []string          `json:"pendingJobs"`
-		Pid              int               `json:"pid"`
-		Handler          string            `json:"handler"`
-		TotalPendingJobs int               `json:"totalPendingJobs"`
-		Runs             int64             `json:"runs"`
+		Status           string   `json:"status"`
+		TotalMessages    int64    `json:"totalReceivedMessages"`
+		Task             string   `json:"task"`
+		TaskStatus       string   `json:"taskStatus"`
+		Messages         []string `json:"pendingJobs"`
+		Pid              int      `json:"pid"`
+		Handler          string   `json:"handler"`
+		TotalPendingJobs int      `json:"totalPendingJobs"`
+		Runs             int64    `json:"runs"`
+		WorkerId         string   `json:"workerId"`
 	}
 	i := structPayload{}
 	i.Status = w.status
 	i.TotalMessages = w.totalReceivedMessages
-	tasks := make(map[string]string)
+	task := ""
+	status := ""
 	for _, t := range w.tasks {
-		tasks[t.id] = t.Status
+		task = t.id
+		status = t.Status
 	}
-	i.Tasks = tasks
+	i.Task = task
+	i.TaskStatus = status
 	i.Messages = w.receivedMessages
 	i.Pid = w.pid
 	_, file, _, _ := runtime.Caller(0)
 	i.Handler = string(file)
 	i.TotalPendingJobs = len(w.receivedMessages)
 	i.Runs = w.runs
+	i.WorkerId = w.workerId
 
 	return i
 }
 
 func (w *worker) receiveMessage(t *RunningTask) error {
 	w.totalReceivedMessages++
+	t.SetWorker(w)
 	w.receivedMessages = append(w.receivedMessages, t.id)
 	return nil
 }
@@ -161,48 +195,21 @@ func NewWorker(q string, target func(task *RunningTask) error) worker {
 	// return a new worker for given queue q
 	return worker{
 		function:              target,
-		queueName:             q,
-		queue:                 amqp.Queue{},
 		pid:                   0,
 		status:                "INITIALIZING",
-		messageChannel:        make(<-chan amqp.Delivery),
 		tasks:                 map[string]*RunningTask{},
 		isAlive:               false,
 		requestStop:           false,
-		connection:            &amqp.Connection{},
-		channel:               &amqp.Channel{},
 		receivedMessages:      []string{},
 		totalReceivedMessages: 0,
+		runs:                  0,
+		workerId:              uuid.New().String(),
+		amqpQueue:             amqp.Queue{},
+		connection:            &amqp.Connection{},
+		channel:               &amqp.Channel{},
+		queueName:             q,
+		messageChannel:        make(<-chan amqp.Delivery),
 	}
-}
-
-func (w *worker) connect() {
-
-	var err error
-	w.connection, err = amqp.Dial(cnf.AMQPConnectionURL)
-	handleError(err, "Can't connect to AMQP")
-
-	w.channel, err = w.connection.Channel()
-	handleError(err, "Can't create a amqpChannel")
-
-	w.queue, err = w.channel.QueueDeclare(w.queueName, true, false, false, false, nil)
-	handleError(err, "Could not declare `"+w.queueName+"` queue")
-
-	err = w.channel.Qos(1, 0, false)
-	handleError(err, "Could not configure QoS")
-
-	w.messageChannel, err = w.channel.Consume(
-		w.queue.Name,
-		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-
-	handleError(err, "Could not register consumer")
-
 }
 
 func TestME(t *RunningTask) error {
@@ -230,29 +237,27 @@ func (w *worker) Stop() {
 	w.requestStop = true
 }
 
-func (w *worker) Start() {
+func Start(w *worker) {
 	w.status = "ON THE BEGNNING"
 
 	// start worker
 	w.connect()
 	w.pid = os.Getpid()
-	println("WORKER PID: ", w.pid)
+	println("WORKER ", w.workerId, " PID: ", w.pid)
 
 	stopChan := make(chan bool)
 	errc := make(chan error)
-	status := statusOK
 
 	errGroup := sync.WaitGroup{}
 	errGroup.Add(1)
 
 	go func() {
 		for err := range errc {
-			status = statusError
 			fmt.Printf("error processing the code: %s\n", err)
 		}
 		errGroup.Done()
 	}()
-	fmt.Println("worker status ", !w.connection.IsClosed(), string(status))
+
 	taskGroup := sync.WaitGroup{}
 	rdb := getRedisClient()
 	for c, t := range w.tasks {
@@ -261,19 +266,22 @@ func (w *worker) Start() {
 			break
 		}
 		ew := errworker.NewErrWorkgroup(1, true)
-
+		w.status = "RUNNING"
 		// rabbit consumer
 		go func() {
 			// Ad infinitum
 			for {
+				println("heartbeat: ", w.workerId)
 				if w.requestStop {
 					break
 				}
 				w.isAlive = true
 
 				for d := range w.messageChannel {
-
-					log.Printf("Received a message: %s", d.MessageId)
+					if d.MessageId == "" {
+						continue
+					}
+					log.Printf("worker %s Received message: %s", w.workerId, d.MessageId)
 					t.Status = TASK_STATUS_PENDING
 					t.id = d.MessageId
 					t.Data = d.Body
@@ -283,26 +291,7 @@ func (w *worker) Start() {
 						log.Printf("Error connecting to Redis : %s", err)
 						break
 					}
-					// rabbitMQ ackowledegment
-					if err := d.Ack(false); err != nil {
-						log.Printf("Error acknowledging message : %s", err)
-					} else {
-						log.Printf("Acknowledged message")
-						w.receiveMessage(t)
-					}
-				}
-
-				time.Sleep(1 * time.Second)
-			}
-		}()
-		// redis time
-		go func() {
-			// Ad infinitum (lol)
-			for {
-				if w.requestStop {
-					break
-				}
-				for _, message := range w.receivedMessages {
+					message := d.MessageId
 					val, err := rdb.Get(context.Background(), message).Result()
 					if err != nil {
 						log.Printf("Message NOT stored in redis: %s", message)
@@ -333,16 +322,24 @@ func (w *worker) Start() {
 
 						close(taskChannel)
 						time.Sleep(1 * time.Second)
+						// rabbitMQ ackowledegment
+						if err := d.Ack(false); err != nil {
+							log.Printf("Error acknowledging message : %s", err)
+						} else {
+							log.Printf("Acknowledged message")
+							w.receiveMessage(&t)
+						}
 					}
-
 				}
+
+				time.Sleep(1 * time.Second)
 			}
 		}()
+
 		log.Println("starting worker for queue: " + c)
 
 	}
 
-	SetQueueControl(w)
 	w.status = "RUNNING BULL"
 	taskGroup.Done()
 
@@ -350,34 +347,129 @@ func (w *worker) Start() {
 	errGroup.Wait()
 	taskGroup.Wait()
 	w.isAlive = false
+	//w.connection.Close()
 	// Stop for program termination
 	<-stopChan
-	w.connection.Close()
 
 }
 
 type Queue interface {
 	GetInstance(name string) queue
-	StopWorker(w worker) (*interface{}, error)
-	StartWorker(w worker) (*interface{}, error)
+	StopWorker(w *worker) error
+	StartWorker(w *worker) error
 	AddWorker(w *worker) error
 	Status()
+	StartConsumer(channelName string) error
+	//connect() *amqp.Connection
+	StartWorkers() error
+	Start() error
+	Info() interface{}
+}
+
+func (q *queue) Info() interface{} {
+	type structPayload struct {
+		Workers []interface{} `json:"workers"`
+	}
+	i := structPayload{}
+	for _, w := range q.workers {
+		i.Workers = append(i.Workers, w.Info())
+	}
+	return i
+}
+
+func (q *queue) Start() error {
+	// not checking errors here, i'm in lazy mode
+
+	//go q.StartConsumer(q.name)
+	go q.StartWorkers()
+	SetQueueControl(q)
+	return nil
+}
+
+func (q *worker) connect() {
+
+	var err error
+	q.connection, err = amqp.Dial(cnf.AMQPConnectionURL)
+	handleError(err, "Can't connect to AMQP")
+
+	q.channel, err = q.connection.Channel()
+	handleError(err, "Can't create a amqpChannel")
+
+	q.amqpQueue, err = q.channel.QueueDeclare(q.queueName, true, false, false, false, nil)
+	handleError(err, "Could not declare `"+q.queueName+"` queue")
+
+	err = q.channel.Qos(1, 0, false)
+	handleError(err, "Could not configure QoS")
+
+	q.messageChannel, err = q.channel.Consume(
+		q.amqpQueue.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+
+	handleError(err, "Could not register consumer")
+
 }
 
 func GetQueueInstance(name string) queue {
 	return queue{
 		name:    name,
 		workers: []worker{},
+
+		requestStop: false,
 	}
 }
 
 func (q *queue) AddWorker(w *worker) error {
+	if len(q.workers) > MaxWorkers {
+		return errors.New("max workers reached!")
+	}
+
 	q.workers = append(q.workers, *w)
 	return nil
 }
 
-var QueueControlObject *worker
+func (q *queue) StartWorkers() error {
+	stopChan := make(chan bool)
+	errc := make(chan error)
 
-func SetQueueControl(w *worker) {
-	QueueControlObject = w
+	errGroup := sync.WaitGroup{}
+	errGroup.Add(1)
+
+	go func() {
+		for err := range errc {
+			fmt.Printf("error processing the code: %s\n", err)
+		}
+		errGroup.Done()
+	}()
+	//fmt.Println("worker status ", !w.q.connection.IsClosed(), string(status))
+	taskGroup := sync.WaitGroup{}
+	for i, w := range q.workers {
+		w.status = string(statusOK)
+		taskGroup.Add(1)
+		go Start(&q.workers[i])
+		//time.Sleep(5 * time.Second)
+		log.Println("starting worker: " + w.workerId)
+
+	}
+
+	taskGroup.Done()
+
+	close(errc)
+	errGroup.Wait()
+	taskGroup.Wait()
+
+	// Stop for program termination
+	<-stopChan
+	return nil
+}
+
+var QueueControlObject *queue
+
+func SetQueueControl(q *queue) {
+	QueueControlObject = q
 }

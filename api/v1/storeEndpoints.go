@@ -277,8 +277,10 @@ func TestQueue(c *gin.Context) {
 }
 
 func TaskStatus(c *gin.Context) {
-	taskId := c.Param("msg")
+	taskId := c.Param("taskId")
+	//println("GET TASK", taskId)
 	rdb := workers.GetRedisClient()
+	defer rdb.Close()
 	res, err := rdb.Get(context.Background(), taskId).Result()
 	if err != nil {
 		log.Printf("Message NOT stored in redis: %s", taskId)

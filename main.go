@@ -51,7 +51,13 @@ func startMQ() {
 	//go mq.Publisher()
 	//workers.StartWorkerDirectoryScan()
 	const channelName string = "testao"
+	q := workers.GetQueueInstance(channelName)
 	w := workers.NewWorker(channelName, workers.TestME)
+	w2 := workers.NewWorker(channelName, workers.TestME)
+	w3 := workers.NewWorker(channelName, workers.TestME)
+	w4 := workers.NewWorker(channelName, workers.TestME)
+	w5 := workers.NewWorker(channelName, workers.TestME)
+
 	t := workers.RunningTask{
 		Order:   0,
 		Channel: channelName,
@@ -60,8 +66,20 @@ func startMQ() {
 	}
 
 	w.Register(&t, channelName)
-	go w.Start()
-	workers.SetQueueControl(&w)
+	q.AddWorker(&w)
+
+	w2.Register(&t, channelName)
+	q.AddWorker(&w2)
+
+	w3.Register(&t, channelName)
+	q.AddWorker(&w3)
+	w4.Register(&t, channelName)
+	q.AddWorker(&w4)
+	w5.Register(&t, channelName)
+	q.AddWorker(&w5)
+
+	workers.SetQueueControl(&q)
+	go q.Start()
 
 }
 
