@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ const (
 	TASK_STATUS_RUNNING = "RUNNING"
 	TASK_STATUS_DONE    = "DONE"
 	TASK_STATUS_ACK     = "ACK"
+	TASK_STATUS_FAIL    = "FAIL"
 	MaxWorkers          = 5
 )
 
@@ -62,6 +62,8 @@ type worker struct {
 	channel               *amqp.Channel
 	queueName             string
 	messageChannel        <-chan amqp.Delivery
+	currentTask           string
+	currentTaskStatus     string
 }
 
 type queue struct {
@@ -122,7 +124,7 @@ type Worker interface {
 	receiveMessage(t *RunningTask) error
 	//Start()
 	Stop()
-	Register(t *RunningTask) error
+	RegisterTask(t *RunningTask) error
 	NewWorker(q string) worker
 	Run(t *RunningTask, taskChannel chan<- RunningTask, ew errworker.ErrWorkgroup) error
 	Info() interface{}
@@ -137,40 +139,25 @@ func (w *worker) removeMessage(message string) error {
 
 func (w *worker) Info() interface{} {
 	type structPayload struct {
-		Status           string   `json:"status"`
-		TotalMessages    int64    `json:"totalReceivedMessages"`
-		Task             string   `json:"task"`
-		TaskStatus       string   `json:"taskStatus"`
-		Messages         []string `json:"pendingJobs"`
-		Pid              int      `json:"pid"`
-		Handler          string   `json:"handler"`
-		TotalPendingJobs int      `json:"totalPendingJobs"`
-		Runs             int64    `json:"runs"`
-		WorkerId         string   `json:"workerId"`
+		Status        string `json:"status"`
+		TotalMessages int64  `json:"totalReceivedMessages"`
+		Task          string `json:"currentTask"`
+		TaskStatus    string `json:"currentTaskStatus"`
+		Runs          int64  `json:"runs"`
+		WorkerId      string `json:"workerId"`
 	}
 	i := structPayload{}
 	i.Status = w.status
 	i.TotalMessages = w.totalReceivedMessages
-	task := ""
-	status := ""
-	for _, t := range w.tasks {
-		task = t.id
-		status = t.Status
-	}
-	i.Task = task
-	i.TaskStatus = status
-	i.Messages = w.receivedMessages
-	i.Pid = w.pid
-	_, file, _, _ := runtime.Caller(0)
-	i.Handler = string(file)
-	i.TotalPendingJobs = len(w.receivedMessages)
+	i.Task = w.currentTask
+	i.TaskStatus = w.currentTaskStatus
 	i.Runs = w.runs
 	i.WorkerId = w.workerId
 
 	return i
 }
 
-func (w *worker) receiveMessage(t *RunningTask) error {
+func (w *worker) receiveMessage(t RunningTask) error {
 	w.totalReceivedMessages++
 	t.SetWorker(w)
 	w.receivedMessages = append(w.receivedMessages, t.id)
@@ -226,7 +213,7 @@ func TestME(t *RunningTask) error {
 	return nil
 }
 
-func (w *worker) Register(t *RunningTask, channel string) error {
+func (w *worker) RegisterTask(t *RunningTask, channel string) error {
 	// register task for worker
 	w.tasks[channel] = t
 	return nil
@@ -299,9 +286,13 @@ func Start(w *worker) {
 						var t RunningTask
 						t.UnmarshalBinary([]byte(val))
 						taskChannel := make(chan RunningTask, 1)
-
+						w.receiveMessage(t)
+						t.id = d.MessageId
+						w.currentTask = d.MessageId
+						w.currentTaskStatus = t.Status
 						// task run
 						if t.Status == TASK_STATUS_PENDING {
+							w.currentTaskStatus = TASK_STATUS_RUNNING
 							log.Printf("Message stored in redis: %s", message)
 							if errRun := w.Run(&t, taskChannel, ew); errRun != nil {
 								errc <- errRun
@@ -309,26 +300,42 @@ func Start(w *worker) {
 						}
 
 						if t.Status == TASK_STATUS_DONE {
-							// delete from redis
-							errDel := rdb.Del(context.Background(), message).Err()
-							if errDel != nil {
-								log.Printf("Couldn't delete message stored in redis: %s", message)
-							}
 
-							w.receivedMessages = helpers.RemoveStringFromArray(w.receivedMessages, message)
+							//w.receivedMessages = helpers.RemoveStringFromArray(w.receivedMessages, message)
+							if err := d.Ack(false); err != nil {
+								log.Printf("Error acknowledging message : %s", err)
+							} else {
+								log.Printf("Acknowledged message")
+
+								// delete from redis
+								errDel := rdb.Del(context.Background(), message).Err()
+								if errDel != nil {
+									log.Printf("Couldn't delete message stored in redis: %s", message)
+								}
+							}
+						}
+
+						if t.Status == TASK_STATUS_FAIL {
+							if err := d.Reject(false); err != nil {
+								log.Printf("Error rejecting message : %s", err)
+							} else {
+								log.Printf("Message rejected")
+
+								// delete from redis
+								errDel := rdb.Del(context.Background(), message).Err()
+								if errDel != nil {
+									log.Printf("Couldn't delete message stored in redis: %s", message)
+								}
+							}
 						}
 
 						//println("TASK STATUS AFTER RUN", t.Status)
 
 						close(taskChannel)
 						time.Sleep(1 * time.Second)
-						// rabbitMQ ackowledegment
-						if err := d.Ack(false); err != nil {
-							log.Printf("Error acknowledging message : %s", err)
-						} else {
-							log.Printf("Acknowledged message")
-							w.receiveMessage(&t)
-						}
+						w.currentTask = ""
+						w.currentTaskStatus = ""
+
 					}
 				}
 
@@ -340,7 +347,6 @@ func Start(w *worker) {
 
 	}
 
-	w.status = "RUNNING BULL"
 	taskGroup.Done()
 
 	close(errc)
@@ -364,16 +370,19 @@ type Queue interface {
 	StartWorkers() error
 	Start() error
 	Info() interface{}
+	Register(queueName string, totalWorkers int, target func(task *RunningTask) error)
 }
 
 func (q *queue) Info() interface{} {
 	type structPayload struct {
+		Total   int           `json:"totalWorkers"`
 		Workers []interface{} `json:"workers"`
 	}
 	i := structPayload{}
 	for _, w := range q.workers {
 		i.Workers = append(i.Workers, w.Info())
 	}
+	i.Total = len(i.Workers)
 	return i
 }
 
@@ -424,12 +433,33 @@ func GetQueueInstance(name string) queue {
 	}
 }
 
-func (q *queue) AddWorker(w *worker) error {
-	if len(q.workers) > MaxWorkers {
-		return errors.New("max workers reached!")
+func (q *queue) Register(queueName string, totalWorkers int, target func(task *RunningTask) error) {
+	var i int = 0
+	if totalWorkers > MaxWorkers {
+		totalWorkers = MaxWorkers
 	}
 
-	q.workers = append(q.workers, *w)
+	for i < totalWorkers {
+		w := NewWorker(queueName, target)
+		t := RunningTask{
+			Order:          0,
+			Channel:        q.name,
+			Status:         "PENDING",
+			Data:           []byte(""),
+			RunnningWorker: w.workerId,
+		}
+		w.RegisterTask(&t, queueName)
+		q.AddWorker(w)
+		i++
+	}
+}
+
+func (q *queue) AddWorker(w worker) error {
+	if len(q.workers) > MaxWorkers {
+		return errors.New("max workers reached")
+	}
+
+	q.workers = append(q.workers, w)
 	return nil
 }
 
@@ -448,6 +478,7 @@ func (q *queue) StartWorkers() error {
 	}()
 	//fmt.Println("worker status ", !w.q.connection.IsClosed(), string(status))
 	taskGroup := sync.WaitGroup{}
+
 	for i, w := range q.workers {
 		w.status = string(statusOK)
 		taskGroup.Add(1)
