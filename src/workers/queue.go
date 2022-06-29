@@ -253,7 +253,7 @@ func Start(w *worker) {
 			break
 		}
 		ew := errworker.NewErrWorkgroup(1, true)
-		w.status = "RUNNING"
+
 		// rabbit consumer
 		go func() {
 			// Ad infinitum
@@ -268,6 +268,7 @@ func Start(w *worker) {
 					if d.MessageId == "" {
 						continue
 					}
+					w.status = "RUNNING"
 					log.Printf("worker %s Received message: %s", w.workerId, d.MessageId)
 					t.Status = TASK_STATUS_PENDING
 					t.id = d.MessageId
@@ -335,6 +336,7 @@ func Start(w *worker) {
 						time.Sleep(1 * time.Second)
 						w.currentTask = ""
 						w.currentTaskStatus = ""
+						w.status = "IDLE"
 
 					}
 				}
