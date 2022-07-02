@@ -86,7 +86,7 @@ func main() {
 		u.Name = "Jesus Junior"
 		// LOGIN INFO
 		u.Email = "j@j.sky"
-		u.Password = "oddlypuertorican"
+		u.Password = "password123"
 		// LOL-GIN INFO
 		if u.Update(true) {
 			println("name update")
